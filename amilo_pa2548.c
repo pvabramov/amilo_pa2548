@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2008-2009 Piotr W. Abramov <piotr.abram@gmail.com>
+  Copyright (C) 2008-2009 Piotr V. Abramov <piotr.abram@gmail.com>
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -51,7 +51,7 @@
 #define AMILO_PA2548_VENDOR         "FUJITSU SIEMENS"
 #define AMILO_PA2548_SYSTEM_NAME    "amilo_pa2548"
 
-#define AMILO_PA2548_AUTHOR			"Piotr W. Abramov"
+#define AMILO_PA2548_AUTHOR			"Piotr V. Abramov"
 #define AMILO_PA2548_DESC			"Fujitsu Siemens Computers Amilo Pa 2548 ACPI support"
 #define AMILO_PA2548_PREFIX			AMILO_PA2548_SYSTEM_NAME ": "
 #define AMILO_PA2548_VERSION        "0.2"
