@@ -31,6 +31,7 @@ clean:
 	@rm -f *.mod.c
 	@rm -f *.symvers
 	@rm -f *.order
+	@rm -f *.markers
 	@rm -f .${TARGET}*
 	@rm -rf .tmp*
 	@echo " |01| Removing target (driver) ..."
