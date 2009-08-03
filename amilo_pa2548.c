@@ -25,7 +25,7 @@
  * This is a documentation for the driver which supports the backlight interface
  * of the Linux.
  *
- * By the default the Linux kernel has not the support of the backlight
+ * By the default the Linux kernel has no the support of the backlight
  * interface for the notebook: <b>FSC Amilo Pa 2548</b>. This driver fixes this issue.
  * But it doesn't fix the hotkey issue, it only registers in the backlight
  * interface and in the platform interface.
