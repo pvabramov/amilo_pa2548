@@ -17,7 +17,7 @@ INSTALL_DIR := /lib/modules/$(KERNEL_VER)/kernel/drivers/misc
 PWD := $(shell pwd)
 DISTFILES = $(TARGET).c
 
-all: $(DISTFILES)
+$(TARGET).ko: $(DISTFILES)
 	@echo "COMPILE DRIVER:"
 	@echo " |00| Compiling ..."
 	$(MAKE) -C $(KERNEL_DIR) SUBDIRS=$(PWD) modules
@@ -38,7 +38,7 @@ clean:
 	@rm -f $(TARGET).ko
 	@echo " |02| Done."
 
-install: all
+install: $(TARGET).ko
 	@echo "INSTALL DRIVER:"
 	@mkdir -p $(INSTALL_DIR)
 	@echo " |00| Copy driver ..."
