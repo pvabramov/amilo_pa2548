@@ -99,7 +99,6 @@
 #define AMILO_PA2548_PREFIX         AMILO_PA2548_SYSTEM_NAME ": "
 #define AMILO_PA2548_VERSION        "0.2"
 
-#define AMILO_PA2548_EC_HID         "PNP0C09"
 #define AMILO_PA2548_DRIVER_NAME    "Amilo Pa 2548 ACPI brightness driver"
 #define AMILO_PA2548_DRIVER_CLASS   "amilo_pa2548"
 
