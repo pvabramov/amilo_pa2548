@@ -156,9 +156,10 @@ static int bl_get_blevel(struct backlight_device *bd);
 static int bl_set_blevel(struct backlight_device *bd);
 
 static ssize_t pf_show_lcd_level(struct device *dev,
-struct device_attribute *attr, char *buf);
+                                 struct device_attribute *attr, char *buf);
 static ssize_t pf_store_lcd_level(struct device *dev,
-struct device_attribute *attr, const char *buf, size_t count);
+                                  struct device_attribute *attr,
+                                  const char *buf, size_t count);
 
 /*****************************************************************************
  * Initialized variables
