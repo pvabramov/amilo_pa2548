@@ -47,7 +47,7 @@ install: $(TARGET).ko
 	@depmod -a
 	@echo " |02| Done."
 
-load: all install
+load: install
 	@echo "LOAD MODULE TO KERNEL:"
 	@echo " |00| Loading driver ..."
 	@modprobe $(TARGET)
