@@ -15,7 +15,7 @@
   along with this program; if not, write to the Free Software      
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA    
   02110-1301, USA.                                                 
- */
+*/
 
 /**
  * @mainpage
@@ -27,8 +27,8 @@
  *
  * By the default the Linux kernel has no the support of the backlight
  * interface for the notebook: <b>FSC Amilo Pa 2548</b>. This driver fixes this issue.
- * But it doesn't fix the hotkey issue, it only registers in the backlight
- * interface and in the platform interface.
+ *
+ * From 2009-11-24 this driver supports Fn-keys: brightness up/down.
  *
  * \section howto How to use
  *
@@ -97,12 +97,23 @@
 #define AMILO_PA2548_AUTHOR         "Piotr V. Abramov"
 #define AMILO_PA2548_DESC           "Fujitsu Siemens Computers Amilo Pa 2548 ACPI support"
 #define AMILO_PA2548_PREFIX         AMILO_PA2548_SYSTEM_NAME ": "
-#define AMILO_PA2548_VERSION        "0.2"
+#define AMILO_PA2548_VERSION        "0.3"
 
 #define AMILO_PA2548_DRIVER_NAME    "Amilo Pa 2548 ACPI brightness driver"
 #define AMILO_PA2548_DRIVER_CLASS   "amilo_pa2548"
 
+#define AMILO_PA2548_ACPI_DRIVER_HID     "LNXSYSTM"
+
+#define ACPI_VIDEO_NOTIFY_INC_BRIGHTNESS     0x86
+#define ACPI_VIDEO_NOTIFY_DEC_BRIGHTNESS     0x87
+
+#define IO_PORT_ADDRESS_SET                  0x72
+#define IO_PORT_DATA_RW                      0x73
+
+#define BRTS_REGISTER_ADDRESS                0xF3
+
 #define kfree_s(x)                  if (x) { kfree(x); x = NULL; }
+#define safe_do(p,a)                if (p) { a; }
 
 /*****************************************************************************
  * Structs
@@ -113,19 +124,11 @@
  */
 struct options_t
 {
-    char *name;     /**< The model name */
-    char *BCL;      /**< The path to `query list of brightness control level supported` */
-    char *BCM;      /**< The path to `set the brightness level` */
-    int max_blevel; /**< The max brightness level */
-    int min_blevel; /**< The min brightness level */
-};
-
-/** 
- * @brief The structure of the data for the global object
- */
-struct data_storage_t
-{
-    int current_blevel; /**< The current brightness level */
+    char *name;       /**< The model name */
+    char *BCL;        /**< The path to `query list of brightness control level supported` */
+    char *BCM;        /**< The path to `set the brightness level` */
+    int max_blevel;   /**< The max brightness level */
+    int min_blevel;   /**< The min brightness level */
 };
 
 /** 
@@ -137,11 +140,18 @@ struct amilo_pa2548_t
     struct backlight_device *bl_device;
     /** The platform device */
     struct platform_device *pf_device;
+    
+    /** ACPI device */
+    struct acpi_device *driver_device;
+    /** Input device */
+    struct input_dev *input;
 
     /** The available model options */
     struct options_t options;
-    /** The data for model */
-    struct data_storage_t data_storage;
+    
+    char input_phys[32];  /**< The path of the input device */
+    int current_blevel;   /**< The current brightness level */
+
 };
 
 /*****************************************************************************
@@ -150,7 +160,8 @@ struct amilo_pa2548_t
 
 static int dmi_setup_opts_to_amilo_pa_2548(const struct dmi_system_id *dsid);
 
-static int low_set_blevel(int level);
+static int lcd_set_blevel(int level);
+static int lcd_get_blevel(int *level);
 
 static int bl_get_blevel(struct backlight_device *bd);
 static int bl_set_blevel(struct backlight_device *bd);
@@ -160,6 +171,9 @@ static ssize_t pf_show_lcd_level(struct device *dev,
 static ssize_t pf_store_lcd_level(struct device *dev,
                                   struct device_attribute *attr,
                                   const char *buf, size_t count);
+static int acpi_driver_add(struct acpi_device *device);
+static int acpi_driver_remove(struct acpi_device *device, int type);
+static void acpi_driver_notify(struct acpi_device *device, u32 event);
 
 /*****************************************************************************
  * Initialized variables
@@ -173,7 +187,8 @@ static struct amilo_pa2548_t *this_laptop = NULL;
 /** 
  * @brief The option indexes of the supported models
  */
-enum OPTIONS_IDX {
+enum OPTIONS_IDX
+{
     MODEL_AMILO_PA_2548 = 0,
     MODEL_END
 };
@@ -181,8 +196,7 @@ enum OPTIONS_IDX {
 /** 
  * @brief The model options
  */
-static const struct options_t __initdata model_options [MODEL_END] =
-{
+static const struct options_t __initdata model_options[MODEL_END] = {
     /* The options for model Amilo Pa 2548 */
     {
         .name = "Amilo Pa 2548",
@@ -196,8 +210,7 @@ static const struct options_t __initdata model_options [MODEL_END] =
 /** 
  * @brief The DMI whitelist of the supported models
  */
-static const struct dmi_system_id __initdata dmi_vip_table[] =
-{
+static const struct dmi_system_id __initdata dmi_vip_table[] = {
     {
         .ident = "Amilo Pa 2548",
         .matches = {
@@ -250,6 +263,28 @@ static struct platform_driver pf_driver = {
     }
 };
 
+/**
+ * @brief IDs of ACPI device
+ */
+static const struct acpi_device_id acpi_driver_device_ids[] = {
+    {AMILO_PA2548_ACPI_DRIVER_HID, 0},
+    {"", 0},
+};
+
+/**
+ * @brief The ACPI driver specific options
+ */
+static struct acpi_driver acpi_amilo_pa2548_driver = {
+    .name = AMILO_PA2548_DRIVER_NAME,
+    .class = AMILO_PA2548_DRIVER_CLASS,
+    .ids = acpi_driver_device_ids,
+    .ops = {
+        .add = acpi_driver_add,
+        .remove = acpi_driver_remove,
+        .notify = acpi_driver_notify,
+    },
+};
+
 /*****************************************************************************
  * Implementation
  *****************************************************************************/
@@ -263,9 +298,9 @@ static struct platform_driver pf_driver = {
  */
 static int dmi_setup_opts_to_amilo_pa_2548(const struct dmi_system_id *dsid)
 {
-   this_laptop->options = model_options[MODEL_AMILO_PA_2548];
+    this_laptop->options = model_options[MODEL_AMILO_PA_2548];
 
-   return 0;
+    return 0;
 }
 
 /** 
@@ -275,7 +310,7 @@ static int dmi_setup_opts_to_amilo_pa_2548(const struct dmi_system_id *dsid)
  * 
  * @return The ACPI error level
  */
-static int low_set_blevel(int level)
+static int lcd_set_blevel(int level)
 {
     int status = 0;
     union acpi_object arg0 = { ACPI_TYPE_INTEGER };
@@ -287,11 +322,62 @@ static int low_set_blevel(int level)
     if (out_of_left_border || out_of_right_border)
         return -EINVAL;
 
-    this_laptop->data_storage.current_blevel = level;
+    this_laptop->current_blevel = level;
     arg0.integer.value = level;
-    status = acpi_evaluate_object(NULL, (char*)this_laptop->options.BCM, &args, NULL);
+    status =
+        acpi_evaluate_object(NULL, (char *)this_laptop->options.BCM, &args,
+                             NULL);
 
     return ACPI_FAILURE(status);
+}
+
+/** 
+ * @brief Gets a brightness level
+ * 
+ * @param level The brightness level
+ * 
+ * @return The ACPI error level
+ */
+static int lcd_get_blevel(int *level)
+{
+    int data = -1;
+    int left_border = this_laptop->options.min_blevel;
+    int right_border = this_laptop->options.max_blevel;
+    int status;
+
+    if (level == NULL)
+        return AE_ERROR;
+
+    (*level) = this_laptop->current_blevel;
+
+    status = acpi_os_write_port(IO_PORT_ADDRESS_SET, BRTS_REGISTER_ADDRESS, 1);
+    if (status < 0)
+    {
+        printk(KERN_ERR AMILO_PA2548_PREFIX
+               "Cannot to write data: %d in port 0x%X\n", BRTS_REGISTER_ADDRESS,
+               IO_PORT_ADDRESS_SET);
+        return AE_ERROR;
+    }
+
+    status = acpi_os_read_port(IO_PORT_DATA_RW, &data, 1);
+    if (status < 0)
+    {
+        printk(KERN_ERR AMILO_PA2548_PREFIX
+               "Cannot to read data from port: 0x%X\n", IO_PORT_DATA_RW);
+        return AE_ERROR;
+    }
+
+    if (left_border > data || data > right_border)
+    {
+        printk(KERN_ERR AMILO_PA2548_PREFIX
+               "Something is strange the read data is %d but expected data in range from %d to %d\n",
+               data, this_laptop->options.min_blevel, this_laptop->options.max_blevel);
+        return AE_ERROR;
+    }
+
+    (*level) = this_laptop->current_blevel = data;
+
+    return AE_OK;
 }
 
 /**
@@ -308,7 +394,10 @@ static int low_set_blevel(int level)
  */
 static int bl_get_blevel(struct backlight_device *bd)
 {
-    return this_laptop->data_storage.current_blevel;
+    int level;
+    lcd_get_blevel(&level);
+        
+    return level;
 }
 
 /** 
@@ -320,7 +409,7 @@ static int bl_get_blevel(struct backlight_device *bd)
  */
 static int bl_set_blevel(struct backlight_device *bd)
 {
-    return low_set_blevel(bd->props.brightness);
+    return lcd_set_blevel(bd->props.brightness);
 }
 
 /** @} */
@@ -340,9 +429,12 @@ static int bl_set_blevel(struct backlight_device *bd)
  * @return The number of passed characters
  */
 static ssize_t pf_show_lcd_level(struct device *dev,
-    struct device_attribute *attr, char *buf)
+                                 struct device_attribute *attr, char *buf)
 {
-    return sprintf(buf, "%i\n", (this_laptop->data_storage.current_blevel));
+    int level;
+    lcd_get_blevel(&level);
+    
+    return sprintf(buf, "%i\n", level);
 }
 
 /** 
@@ -356,23 +448,185 @@ static ssize_t pf_show_lcd_level(struct device *dev,
  * @return The buffer size
  */
 static ssize_t pf_store_lcd_level(struct device *dev,
-    struct device_attribute *attr, const char *buf, size_t count)
+                                  struct device_attribute *attr,
+                                  const char *buf, size_t count)
 {
-    int lvl, ret;
+    int status;
+    int level;
 
-    if ((sscanf(buf, "%i", &lvl) != 1)
-            || (lvl < this_laptop->options.min_blevel)
-            || (lvl > this_laptop->options.max_blevel))
-        return EINVAL;
+    status = sscanf(buf, "%i", &level);
+    if (status < 0)
+        level = this_laptop->current_blevel;
 
-    ret = low_set_blevel(lvl);
-    if (ret < 0) 
-        return ret;
+    status = lcd_set_blevel(level);
+    if (status < 0)
+        return status;
 
     return count;
 }
 
 /** @} */
+
+/**
+ * @defgroup The ACPI driver group
+ * @{
+ */
+
+/** 
+ * Adds ACPI driver to kernelspace - registers input device to trap ACPI events
+ * 
+ * @param device The ACPI device
+ * 
+ * @return The exit code
+ */
+static int acpi_driver_add(struct acpi_device *device)
+{
+    struct input_dev *input;
+    int result = 0;
+
+    if (device == NULL)
+    {
+        result = -EINVAL;
+        goto __failed_to_get_device;
+    }
+
+    sprintf(acpi_device_name(device), "%s", AMILO_PA2548_DRIVER_NAME);
+    sprintf(acpi_device_class(device), "%s", AMILO_PA2548_DRIVER_CLASS);
+
+    device->driver_data = this_laptop;
+
+    input = input_allocate_device();
+    if (input == NULL)
+    {
+        result = -ENOMEM;
+        goto __failed_to_allocate_input_device;
+    }
+    this_laptop->input = input;
+
+    snprintf(this_laptop->input_phys, sizeof(this_laptop->input_phys),
+             "%s/video/input0", acpi_device_hid(device));
+
+    input->name = acpi_device_name(device);
+
+    input->phys = this_laptop->input_phys;
+    input->id.bustype = BUS_HOST;
+    input->id.product = 0x06;
+    input->dev.parent = &device->dev;
+    input->evbit[0] = BIT(EV_KEY);
+    set_bit(KEY_BRIGHTNESSUP, input->keybit);
+    set_bit(KEY_BRIGHTNESSDOWN, input->keybit);
+    set_bit(KEY_UNKNOWN, input->keybit);
+
+    result = input_register_device(input);
+    if (result)
+    {
+        printk(KERN_ERR AMILO_PA2548_PREFIX "Cannot register input device\n");
+        goto __failed_to_register_input_device;
+    }
+
+    this_laptop->driver_device = device;
+
+    return 0;
+
+__failed_to_register_input_device:
+    input_free_device(input);
+    this_laptop->input = NULL;
+
+__failed_to_allocate_input_device:
+__failed_to_get_device:
+
+   return result;
+}
+
+/** 
+ * Removes the ACPI driver from kernelspace
+ * 
+ * @param device The ACPI device
+ * @param type The type of the ACPI driver
+ * 
+ * @return The exit code
+ */
+static int acpi_driver_remove(struct acpi_device *device, int type)
+{
+    int result = 0;
+
+    if (device == NULL)
+        result = -EINVAL;
+
+    /* free the input device */
+    safe_do(this_laptop->input, input_free_device(this_laptop->input));
+    this_laptop->input = NULL;
+
+    return result;
+}
+
+/** 
+ * Handles notifications
+ * 
+ * @param device The ACPI device
+ * @param event The ACPI event
+ */
+static void acpi_driver_notify(struct acpi_device *device, u32 event)
+{
+    struct input_dev *input = NULL;
+    int keycode = 0;
+    int level;
+
+    input = this_laptop->input;
+
+    lcd_get_blevel(&level);
+
+    switch (event)
+    {
+        case ACPI_VIDEO_NOTIFY_DEC_BRIGHTNESS:
+            lcd_set_blevel(--level);
+            keycode = KEY_BRIGHTNESSDOWN;
+            acpi_bus_generate_proc_event(this_laptop->driver_device,
+                                         ACPI_VIDEO_NOTIFY_DEC_BRIGHTNESS, 0);
+            break;
+
+        case ACPI_VIDEO_NOTIFY_INC_BRIGHTNESS:
+            lcd_set_blevel(++level);
+            keycode = KEY_BRIGHTNESSUP;
+            acpi_bus_generate_proc_event(this_laptop->driver_device,
+                                         ACPI_VIDEO_NOTIFY_INC_BRIGHTNESS, 0);
+            break;
+
+        default:
+            keycode = 0;
+            printk(KERN_WARNING AMILO_PA2548_PREFIX "Unknown event: 0x%X\n",
+                   event);
+    }
+
+    if (keycode != 0)
+    {
+        input_report_key(input, keycode, 1);
+        input_sync(input);
+        input_report_key(input, keycode, 0);
+        input_sync(input);
+   }
+}
+
+/**
+ * }@
+ */
+
+static void this_laptop_init(struct amilo_pa2548_t *this)
+{
+    this->pf_device = NULL;
+    this->bl_device = NULL;
+    this->input = NULL;
+    this->driver_device = NULL;
+    
+    memset(this->input_phys, 0, sizeof(this->input_phys));
+
+    {
+        int level;
+        this->current_blevel = this->options.max_blevel;
+        if (lcd_get_blevel(&level))
+            this->current_blevel = level;
+    }
+}
 
 /** 
  * @brief Initializes this module
@@ -383,7 +637,7 @@ static int __init amilo_pa2548_init(void)
 {
     int result = 0;
 
-    if (acpi_disabled) /* Without ACPI nothing to do */
+    if (acpi_disabled)           /* Without ACPI nothing to do */
         return -ENODEV;
 
     /* Allocate main obj */
@@ -394,36 +648,59 @@ static int __init amilo_pa2548_init(void)
     /* Verify supported models */
     if (!dmi_check_system(dmi_vip_table))
     {
-        printk(KERN_ERR AMILO_PA2548_PREFIX "this notebook is not supported.\n");
+        printk(KERN_ERR AMILO_PA2548_PREFIX
+               "this notebook is not supported.\n");
 
         result = -ENODEV;
         goto __unsupported_device;
     }
 
-    /* Set brightness level to max */
-    low_set_blevel(this_laptop->options.max_blevel);
+    this_laptop_init(this_laptop);
 
-    /* Register backlight stuff */
-
-    this_laptop->bl_device = backlight_device_register(AMILO_PA2548_SYSTEM_NAME,
-            NULL, NULL, &bl_opts);
-    if (IS_ERR(this_laptop->bl_device)) {
+    /* ACPI driver stuff */
+    
+    result = acpi_bus_register_driver(&acpi_amilo_pa2548_driver);
+    if (result < 0)
+    {
         result = -ENODEV;
-        goto __cannot_register_backlight_device;
+        goto __cannot_register_acpi_driver;
     }
 
-    /* set backlight options */
+    /* Backlight stuff */
 
-    this_laptop->bl_device->props.max_brightness = this_laptop->options.max_blevel;
-    this_laptop->bl_device->props.brightness = this_laptop->data_storage.current_blevel;
+    if (acpi_video_backlight_support() == 0)
+    /*
+     * If kernel ACPI doesn't support backlight device
+     * then we have to register own
+     */
+    {
+        int level;
+        
+        this_laptop->bl_device =
+            backlight_device_register(AMILO_PA2548_SYSTEM_NAME, NULL, NULL,
+                                      &bl_opts);
+        if (IS_ERR(this_laptop->bl_device))
+        {
+            result = -ENODEV;
+            goto __cannot_register_backlight_device;
+        }
 
-    /* Register platform stuff */
+        /* Set backlight options */
+        this_laptop->bl_device->props.max_brightness =
+            this_laptop->options.max_blevel;
+
+        lcd_get_blevel(&level);
+        this_laptop->bl_device->props.brightness = level;
+    }
+
+    /* Platform stuff */
 
     result = platform_driver_register(&pf_driver);
     if (result < 0)
         goto __cannot_register_platform_driver;
 
-    this_laptop->pf_device = platform_device_alloc(AMILO_PA2548_SYSTEM_NAME, -1);
+    this_laptop->pf_device =
+        platform_device_alloc(AMILO_PA2548_SYSTEM_NAME, -1);
     if (IS_ERR(this_laptop->pf_device))
         goto __cannot_allocate_device;
 
@@ -432,13 +709,13 @@ static int __init amilo_pa2548_init(void)
         goto __cannot_add_device;
 
     result = sysfs_create_group(&this_laptop->pf_device->dev.kobj,
-        &pf_attribute_group);
+                                &pf_attribute_group);
     if (result < 0)
         goto __cannot_create_group_in_sysfs;
 
     /* Print ok message */
-    printk(KERN_INFO AMILO_PA2548_SYSTEM_NAME " version %s loaded\n",
-            AMILO_PA2548_VERSION);
+    printk(KERN_INFO AMILO_PA2548_PREFIX AMILO_PA2548_SYSTEM_NAME
+           " version %s loaded\n", AMILO_PA2548_VERSION);
 
     return 0;
 
@@ -454,6 +731,8 @@ __cannot_allocate_device:
 __cannot_register_platform_driver:
     backlight_device_unregister(this_laptop->bl_device);
 __cannot_register_backlight_device:
+    acpi_bus_unregister_driver(&acpi_amilo_pa2548_driver);
+__cannot_register_acpi_driver:
 __unsupported_device:
     kfree_s(this_laptop);
 
@@ -466,14 +745,22 @@ __unsupported_device:
  */
 static void __exit amilo_pa2548_exit(void)
 {
-    sysfs_remove_group(&this_laptop->pf_device->dev.kobj,
-        &pf_attribute_group);
+    if (!this_laptop)
+        return;
 
-    platform_device_unregister(this_laptop->pf_device);
-
+    safe_do(this_laptop->pf_device,
+            sysfs_remove_group(&this_laptop->pf_device->dev.kobj,
+                               &pf_attribute_group));
+    
+    safe_do(this_laptop->pf_device,
+            platform_device_unregister(this_laptop->pf_device));
+    
     platform_driver_unregister(&pf_driver);
-
-    backlight_device_unregister(this_laptop->bl_device);
+    
+    safe_do(this_laptop->bl_device,
+            backlight_device_unregister(this_laptop->bl_device));
+    
+    acpi_bus_unregister_driver(&acpi_amilo_pa2548_driver);
 
     kfree_s(this_laptop);
     /* Goodbye message */
