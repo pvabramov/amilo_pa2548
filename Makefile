@@ -13,7 +13,7 @@ amilo_pa2548-objs :=
 
 KERNEL_VER := $(shell uname -r)
 KERNEL_DIR := /lib/modules/$(KERNEL_VER)/build
-INSTALL_DIR := /lib/modules/$(KERNEL_VER)/kernel/drivers/misc
+INSTALL_DIR := /lib/modules/$(KERNEL_VER)/kernel/drivers/platform/x86
 PWD := $(shell pwd)
 DISTFILES = $(TARGET).c
 
