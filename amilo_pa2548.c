@@ -240,6 +240,8 @@ static const struct dmi_system_id __initdata dmi_vip_table[] = {
 
 /** 
  * @brief The backlight options
+ *
+ * @ingroup backlightgroup
  */
 static struct backlight_ops bl_opts = {
     .get_brightness = bl_get_blevel,
@@ -281,6 +283,8 @@ static struct platform_driver pf_driver = {
 
 /**
  * @brief IDs of ACPI device
+ *
+ * @ingroup acpidrivergroup
  */
 static const struct acpi_device_id acpi_driver_device_ids[] = {
     {AMILO_PA2548_ACPI_DRIVER_HID, 0},
@@ -289,6 +293,8 @@ static const struct acpi_device_id acpi_driver_device_ids[] = {
 
 /**
  * @brief The ACPI driver specific options
+ *
+ * @ingroup acpidrivergroup
  */
 static struct acpi_driver acpi_amilo_pa2548_driver = {
     .name = AMILO_PA2548_DRIVER_NAME,
@@ -303,6 +309,8 @@ static struct acpi_driver acpi_amilo_pa2548_driver = {
 
 /**
  * @brief The LED device specific options
+ *
+ * @ingroup leddrivergroup
  */
 static struct led_classdev amilo_pa2548_sm_led = {
     .name = AMILO_PA2548_SYSTEM_NAME "::silentmode",
