@@ -28,7 +28,8 @@
  * By the default the Linux kernel has no the support of the backlight
  * interface for the notebook: <b>FSC Amilo Pa 2548</b>. This driver fixes this issue.
  *
- * From 2009-11-24 this driver supports Fn-keys: brightness up/down.
+ * - From 2009-11-29 this driver supports LED controlling: 'silentmode' LED.
+ * - From 2009-11-24 this driver supports Fn-keys: brightness up/down.
  *
  * \section howto How to use
  *
@@ -47,6 +48,15 @@
  *
  * This is a standart way to change the brightness level. It is available to
  * userspace under /sys/class/backlight/amilo_pa2548/.
+ *
+ * \subsection howtocontrolled How to control LEDs
+ *
+ * In order to turn a 'silentmode' led on/off you have to write into file:
+ * "/sys/class/leds/amilo_pa2548::silentmode" the following data:
+ *
+ * - >= 255 - Full brightness (LED on)
+ * - >= 127 - Half brightness (LED on)
+ * - >= 0   - Null brightness (LED off)
  *
  * \section setup Installation
  *
@@ -86,6 +96,7 @@
 #include <linux/video_output.h>
 #include <linux/platform_device.h>
 #include <linux/string.h>
+#include <linux/leds.h>
 
 /*****************************************************************************
  * Defines
@@ -106,6 +117,8 @@
 
 #define ACPI_VIDEO_NOTIFY_INC_BRIGHTNESS     0x86
 #define ACPI_VIDEO_NOTIFY_DEC_BRIGHTNESS     0x87
+
+#define IO_PORT_LED_ADDRESS                  0x14cb
 
 #define IO_PORT_ADDRESS_SET                  0x72
 #define IO_PORT_DATA_RW                      0x73
@@ -151,7 +164,6 @@ struct amilo_pa2548_t
     
     char input_phys[32];  /**< The path of the input device */
     int current_blevel;   /**< The current brightness level */
-
 };
 
 /*****************************************************************************
@@ -174,6 +186,10 @@ static ssize_t pf_store_lcd_level(struct device *dev,
 static int acpi_driver_add(struct acpi_device *device);
 static int acpi_driver_remove(struct acpi_device *device, int type);
 static void acpi_driver_notify(struct acpi_device *device, u32 event);
+
+static enum led_brightness led_sm_brightness_get(struct led_classdev *device);
+static void led_sm_brightness_set(struct led_classdev *device,
+                                  enum led_brightness brightness);
 
 /*****************************************************************************
  * Initialized variables
@@ -283,6 +299,15 @@ static struct acpi_driver acpi_amilo_pa2548_driver = {
         .remove = acpi_driver_remove,
         .notify = acpi_driver_notify,
     },
+};
+
+/**
+ * @brief The LED device specific options
+ */
+static struct led_classdev amilo_pa2548_sm_led = {
+    .name = AMILO_PA2548_SYSTEM_NAME "::silentmode",
+    .brightness_get = led_sm_brightness_get,
+    .brightness_set = led_sm_brightness_set
 };
 
 /*****************************************************************************
@@ -468,7 +493,7 @@ static ssize_t pf_store_lcd_level(struct device *dev,
 /** @} */
 
 /**
- * @defgroup The ACPI driver group
+ * @defgroup acpidrivergroup The ACPI driver group
  * @{
  */
 
@@ -607,9 +632,68 @@ static void acpi_driver_notify(struct acpi_device *device, u32 event)
    }
 }
 
+/** @} */
+
 /**
- * }@
+ * @defgroup leddrivergroup The LED driver group
+ * @{ 
  */
+
+/** 
+ * Returns a brightness of the 'silentmode' LED
+ * 
+ * @param device The LED device
+ * 
+ * @return The brightness of the 'silentmode' LED
+ */
+static enum led_brightness led_sm_brightness_get(struct led_classdev *device)
+{
+    enum led_brightness brightness = LED_OFF;
+    int status = 0;
+    u32 led_data = 0;
+
+    status = acpi_os_read_port(IO_PORT_LED_ADDRESS, &led_data, 1);
+    if (status < 0)
+    {
+        printk(KERN_ERR AMILO_PA2548_PREFIX "Cannot read led brightness data\n");
+        return LED_OFF;
+    }
+
+    if (led_data & 0x01)
+        brightness = LED_FULL;
+    else if (led_data & 0x02)
+        brightness = LED_HALF;
+    else
+        brightness = LED_OFF;
+
+    return brightness;
+}
+
+/** 
+ * Sets a brightness of the 'silentmode' LED
+ * 
+ * @param device The LED device
+ * @param brightness The LED brightness
+ */
+static void led_sm_brightness_set(struct led_classdev *device,
+                                  enum led_brightness brightness)
+{
+    int status = 0;
+    u32 led_data = 0;
+    
+    if (brightness >= LED_FULL)
+        led_data = 0x05;
+    else if (brightness >= LED_HALF)
+        led_data = 0x06;
+    else
+        led_data = 0x04;
+
+    status = acpi_os_write_port(IO_PORT_LED_ADDRESS, led_data, 1);
+    if (status < 0)
+        printk(KERN_ERR AMILO_PA2548_PREFIX "Cannot set led brightness\n");
+}
+
+/** @} */
 
 static void this_laptop_init(struct amilo_pa2548_t *this)
 {
@@ -713,12 +797,21 @@ static int __init amilo_pa2548_init(void)
     if (result < 0)
         goto __cannot_create_group_in_sysfs;
 
+    /* LED stuff */
+
+    result =
+        led_classdev_register(&this_laptop->pf_device->dev, &amilo_pa2548_sm_led);
+
+    if (result < 0)
+        goto __cannot_register_led_device;
+
     /* Print ok message */
     printk(KERN_INFO AMILO_PA2548_PREFIX AMILO_PA2548_SYSTEM_NAME
            " version %s loaded\n", AMILO_PA2548_VERSION);
 
     return 0;
 
+__cannot_register_led_device:
 __cannot_create_group_in_sysfs:
     platform_device_del(this_laptop->pf_device);
 
@@ -747,6 +840,8 @@ static void __exit amilo_pa2548_exit(void)
 {
     if (!this_laptop)
         return;
+
+    led_classdev_unregister(&amilo_pa2548_sm_led);
 
     safe_do(this_laptop->pf_device,
             sysfs_remove_group(&this_laptop->pf_device->dev.kobj,
