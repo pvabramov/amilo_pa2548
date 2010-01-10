@@ -22,14 +22,20 @@
  *
  * \section intro Introduction
  *
- * This is a documentation for the driver which supports the backlight interface
- * of the Linux.
+ * This is a documentation for the driver which supports a brightness changing via
+ * backlight interface, Fn-keys (to version 2.6.32) and platform interface.
  *
- * By the default the Linux kernel has no the support of the backlight
- * interface for the notebook: <b>FSC Amilo Pa 2548</b>. This driver fixes this issue.
+ * Also this driver supports a LED interface to special LEDs.
+ *
+ * Release notes:
  *
  * - From 2009-11-29 this driver supports LED controlling: 'silentmode' LED.
  * - From 2009-11-24 this driver supports Fn-keys: brightness up/down.
+ *
+ * NOTE:
+ *
+ * From kernel version 2.6.32 the kernel supports a brightness changing via Fn-keys.
+ * Also it creates own backlight interface under /sys/class/backlight/ and /proc/acpi/video/VGA/.
  *
  * \section howto How to use
  *
@@ -47,7 +53,7 @@
  * Also you can use the backlight interface.
  *
  * This is a standart way to change the brightness level. It is available to
- * userspace under /sys/class/backlight/amilo_pa2548/.
+ * userspace under /sys/class/backlight/amilo_pa2548/ (to version 2.6.32).
  *
  * \subsection howtocontrolled How to control LEDs
  *
@@ -72,19 +78,6 @@
  * Copyrights (c) 2008-2009
  */
 
-/**
- * @file amilo_pa2548.c
- *
- * @brief Fujitsu Siemens Computers Amilo Pa 2548 ACPI support
- *
- * The driver exports a file in /sys/devices/platform/amilo_pa2548/;
- *
- * -rw-rw-rw- lcd_level - LCD brightness, a single integer in the range 0..7
- *
- * Also it registers in the Linux backlight control subsystem and is
- * available to userspace under /sys/class/backlight/amilo_pa2548/.
- */
-
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
@@ -97,6 +90,13 @@
 #include <linux/platform_device.h>
 #include <linux/string.h>
 #include <linux/leds.h>
+#include <linux/version.h>
+
+#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,31)
+#   define KERNEL_ALREADY_HAS_IT
+#else
+#   undef KERNEL_ALREADY_HAS_IT
+#endif
 
 /*****************************************************************************
  * Defines
@@ -154,15 +154,19 @@ struct amilo_pa2548_t
     /** The platform device */
     struct platform_device *pf_device;
     
+#ifndef KERNEL_ALREADY_HAS_IT
     /** ACPI device */
     struct acpi_device *driver_device;
     /** Input device */
     struct input_dev *input;
+#endif
 
     /** The available model options */
     struct options_t options;
     
+#ifndef KERNEL_ALREADY_HAS_IT
     char input_phys[32];  /**< The path of the input device */
+#endif
     int current_blevel;   /**< The current brightness level */
 };
 
@@ -183,9 +187,11 @@ static ssize_t pf_show_lcd_level(struct device *dev,
 static ssize_t pf_store_lcd_level(struct device *dev,
                                   struct device_attribute *attr,
                                   const char *buf, size_t count);
+#ifndef KERNEL_ALREADY_HAS_IT
 static int acpi_driver_add(struct acpi_device *device);
 static int acpi_driver_remove(struct acpi_device *device, int type);
 static void acpi_driver_notify(struct acpi_device *device, u32 event);
+#endif
 
 static enum led_brightness led_sm_brightness_get(struct led_classdev *device);
 static void led_sm_brightness_set(struct led_classdev *device,
@@ -281,6 +287,8 @@ static struct platform_driver pf_driver = {
     }
 };
 
+#ifndef KERNEL_ALREADY_HAS_IT
+
 /**
  * @brief IDs of ACPI device
  *
@@ -306,6 +314,8 @@ static struct acpi_driver acpi_amilo_pa2548_driver = {
         .notify = acpi_driver_notify,
     },
 };
+
+#endif
 
 /**
  * @brief The LED device specific options
@@ -500,6 +510,8 @@ static ssize_t pf_store_lcd_level(struct device *dev,
 
 /** @} */
 
+#ifndef KERNEL_ALREADY_HAS_IT
+
 /**
  * @defgroup acpidrivergroup The ACPI driver group
  * @{
@@ -642,6 +654,8 @@ static void acpi_driver_notify(struct acpi_device *device, u32 event)
 
 /** @} */
 
+#endif
+
 /**
  * @defgroup leddrivergroup The LED driver group
  * @{ 
@@ -707,10 +721,12 @@ static void this_laptop_init(struct amilo_pa2548_t *this)
 {
     this->pf_device = NULL;
     this->bl_device = NULL;
+#ifndef KERNEL_ALREADY_HAS_IT
     this->input = NULL;
     this->driver_device = NULL;
     
     memset(this->input_phys, 0, sizeof(this->input_phys));
+#endif
 
     {
         int level;
@@ -749,6 +765,8 @@ static int __init amilo_pa2548_init(void)
 
     this_laptop_init(this_laptop);
 
+#ifndef KERNEL_ALREADY_HAS_IT
+
     /* ACPI driver stuff */
     
     result = acpi_bus_register_driver(&acpi_amilo_pa2548_driver);
@@ -757,6 +775,8 @@ static int __init amilo_pa2548_init(void)
         result = -ENODEV;
         goto __cannot_register_acpi_driver;
     }
+
+#endif
 
     /* Backlight stuff */
 
@@ -831,9 +851,13 @@ __cannot_allocate_device:
 
 __cannot_register_platform_driver:
     backlight_device_unregister(this_laptop->bl_device);
+
 __cannot_register_backlight_device:
+#ifndef KERNEL_ALREADY_HAS_IT
     acpi_bus_unregister_driver(&acpi_amilo_pa2548_driver);
+
 __cannot_register_acpi_driver:
+#endif
 __unsupported_device:
     kfree_s(this_laptop);
 
@@ -863,7 +887,9 @@ static void __exit amilo_pa2548_exit(void)
     safe_do(this_laptop->bl_device,
             backlight_device_unregister(this_laptop->bl_device));
     
+#ifndef KERNEL_ALREADY_HAS_IT
     acpi_bus_unregister_driver(&acpi_amilo_pa2548_driver);
+#endif
 
     kfree_s(this_laptop);
     /* Goodbye message */
