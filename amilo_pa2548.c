@@ -98,6 +98,11 @@
 #   undef KERNEL_ALREADY_HAS_IT
 #endif
 
+/* compilation fix for 2.6.34 and higher */
+#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,33)
+#   define BACKLIGHT_DEVICE_REGISTER_FIX
+#endif
+
 /*****************************************************************************
  * Defines
  *****************************************************************************/
@@ -790,7 +795,13 @@ static int __init amilo_pa2548_init(void)
         
         this_laptop->bl_device =
             backlight_device_register(AMILO_PA2548_SYSTEM_NAME, NULL, NULL,
+        /* compilation fix for 2.6.34 and higher */
+        #ifdef BACKLIGHT_DEVICE_REGISTER_FIX
+                                      &bl_opts, NULL);
+        #else
                                       &bl_opts);
+        #endif
+
         if (IS_ERR(this_laptop->bl_device))
         {
             result = -ENODEV;
