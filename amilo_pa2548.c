@@ -113,7 +113,7 @@
 #define AMILO_PA2548_AUTHOR         "Piotr V. Abramov"
 #define AMILO_PA2548_DESC           "Fujitsu Siemens Computers Amilo Pa 2548 ACPI support"
 #define AMILO_PA2548_PREFIX         AMILO_PA2548_SYSTEM_NAME ": "
-#define AMILO_PA2548_VERSION        "0.3"
+#define AMILO_PA2548_VERSION        "0.4"
 
 #define AMILO_PA2548_DRIVER_NAME    "Amilo Pa 2548 ACPI brightness driver"
 #define AMILO_PA2548_DRIVER_CLASS   "amilo_pa2548"
